@@ -144,3 +144,73 @@ def test_delete_contact(client, payload):
 def test_root_lists_entrypoints(client):
     body = client.get("/").json()
     assert body["contacts"] == BASE
+
+
+# --- Photo -----------------------------------------------------------------
+
+# 1x1 transparent PNG.
+PHOTO = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
+
+
+def test_create_contact_with_photo(client, payload):
+    response = client.post(BASE, json={**payload, "photo": PHOTO})
+    assert response.status_code == 201
+    assert response.json()["photo"] == PHOTO
+
+
+def test_photo_defaults_to_none(client, payload):
+    assert client.post(BASE, json=payload).json()["photo"] is None
+
+
+def test_photo_rejects_non_data_url(client, payload):
+    response = client.post(BASE, json={**payload, "photo": "https://example.com/me.png"})
+    assert response.status_code == 422
+
+
+def test_photo_rejects_non_image_data_url(client, payload):
+    response = client.post(BASE, json={**payload, "photo": "data:text/html;base64,PGI+aGk8L2I+"})
+    assert response.status_code == 422
+
+
+def test_photo_rejects_invalid_base64(client, payload):
+    response = client.post(BASE, json={**payload, "photo": "data:image/png;base64,@@not-base64@@"})
+    assert response.status_code == 422
+
+
+def test_photo_rejects_oversized_image(client, payload):
+    import base64
+
+    from app.schemas import MAX_PHOTO_BYTES
+
+    too_big = base64.b64encode(b"\0" * (MAX_PHOTO_BYTES + 1)).decode()
+    response = client.post(BASE, json={**payload, "photo": f"data:image/png;base64,{too_big}"})
+    assert response.status_code == 422
+
+
+def test_patch_updates_photo_only(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    response = client.patch(f"{BASE}/{contact_id}", json={"photo": PHOTO})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["photo"] == PHOTO
+    assert body["first_name"] == "Ada"
+
+
+def test_put_without_photo_clears_it(client, payload):
+    contact_id = client.post(BASE, json={**payload, "photo": PHOTO}).json()["id"]
+    response = client.put(
+        f"{BASE}/{contact_id}",
+        json={"first_name": "Ada", "last_name": "Lovelace", "email": "ada@example.com"},
+    )
+    assert response.status_code == 200
+    assert response.json()["photo"] is None  # PUT is a full replace
+
+
+def test_put_carrying_photo_preserves_it(client, payload):
+    contact_id = client.post(BASE, json={**payload, "photo": PHOTO}).json()["id"]
+    response = client.put(f"{BASE}/{contact_id}", json={**payload, "photo": PHOTO})
+    assert response.status_code == 200
+    assert response.json()["photo"] == PHOTO
