@@ -273,3 +273,97 @@ def test_put_carrying_photo_preserves_it(client, payload):
     response = client.put(f"{BASE}/{contact_id}", json={**payload, "photo": PHOTO})
     assert response.status_code == 200
     assert response.json()["photo"] == PHOTO
+
+
+# --- Addresses -------------------------------------------------------------
+
+
+def test_create_contact_with_multiple_addresses(client, payload):
+    addresses = [
+        {"type": "Home", "city": "San Francisco", "state": "CA"},
+        {"type": "Work", "street": "1 Market St", "city": "San Francisco"},
+        {"type": "Other", "city": "Tahoe"},
+    ]
+    response = client.post(BASE, json={**payload, "addresses": addresses})
+    assert response.status_code == 201
+    body = response.json()
+    assert [a["type"] for a in body["addresses"]] == ["Home", "Work", "Other"]
+    assert all(a["id"] > 0 for a in body["addresses"])
+
+
+def test_addresses_default_to_empty_list(client, payload):
+    response = client.post(BASE, json={k: v for k, v in payload.items() if k != "addresses"})
+    assert response.status_code == 201
+    assert response.json()["addresses"] == []
+
+
+def test_address_rejects_unknown_type(client, payload):
+    response = client.post(
+        BASE, json={**payload, "addresses": [{"type": "Vacation", "city": "Tahoe"}]}
+    )
+    assert response.status_code == 422
+
+
+def test_address_rejects_all_blank_fields(client, payload):
+    response = client.post(BASE, json={**payload, "addresses": [{"type": "Home"}]})
+    assert response.status_code == 422
+
+
+def test_put_replaces_address_list(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    response = client.put(
+        f"{BASE}/{contact_id}",
+        json={**payload, "addresses": [{"type": "Work", "city": "Oakland"}]},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["addresses"]) == 1
+    assert body["addresses"][0]["city"] == "Oakland"
+
+
+def test_put_without_addresses_clears_them(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    response = client.put(
+        f"{BASE}/{contact_id}",
+        json={"first_name": "Ada", "last_name": "Lovelace", "email": "ada@example.com"},
+    )
+    assert response.status_code == 200
+    assert response.json()["addresses"] == []  # PUT is a full replace
+
+
+def test_patch_without_addresses_keeps_them(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    response = client.patch(f"{BASE}/{contact_id}", json={"phone": "+1-000-000-0000"})
+    assert response.status_code == 200
+    assert len(response.json()["addresses"]) == 1
+
+
+def test_patch_addresses_replaces_the_list(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    response = client.patch(
+        f"{BASE}/{contact_id}",
+        json={"addresses": [{"type": "Other", "city": "Tahoe"}, {"type": "Home", "city": "SF"}]},
+    )
+    assert response.status_code == 200
+    assert [a["type"] for a in response.json()["addresses"]] == ["Other", "Home"]
+
+
+def test_patch_null_addresses_clears_them(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    response = client.patch(f"{BASE}/{contact_id}", json={"addresses": None})
+    assert response.status_code == 200
+    assert response.json()["addresses"] == []
+
+
+def test_deleting_contact_deletes_its_addresses(client, payload):
+    from sqlalchemy import func, select
+
+    from app.database import SessionLocal
+    from app.models import Address
+
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    assert client.delete(f"{BASE}/{contact_id}").status_code == 204
+
+    with SessionLocal() as db:
+        orphans = db.execute(select(func.count()).select_from(Address)).scalar_one()
+    assert orphans == 0  # no orphaned address rows
