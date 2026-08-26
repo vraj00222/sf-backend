@@ -108,8 +108,10 @@ also read):
 
 ```
 first_name, last_name, email, phone, company, job_title,
-address, city, state, postal_code, country, notes
+address, city, state, postal_code, country, notes, photo
 ```
+
+`photo` is a base64 image data URL (PNG/JPEG/GIF/WebP, max 2 MB decoded).
 
 Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC).
 
