@@ -374,3 +374,44 @@ def test_deleting_contact_deletes_its_addresses(client, payload):
     with SessionLocal() as db:
         orphans = db.execute(select(func.count()).select_from(Address)).scalar_one()
     assert orphans == 0  # no orphaned address rows
+
+
+# --- vCard export ----------------------------------------------------------
+
+
+def test_vcard_export(client, payload):
+    contact_id = client.post(BASE, json={**payload, "photo": PHOTO}).json()["id"]
+    response = client.get(f"{BASE}/{contact_id}/vcard")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/vcard")
+    assert 'filename="Ada Lovelace.vcf"' in response.headers["content-disposition"]
+
+    body = response.text
+    assert body.startswith("BEGIN:VCARD\r\nVERSION:3.0")
+    assert "FN:Ada Lovelace" in body
+    assert "EMAIL;TYPE=INTERNET:ada@example.com" in body
+    assert "ADR;TYPE=HOME:;;1 Market St;San Francisco;CA;94105;USA" in body
+    assert "PHOTO;ENCODING=b;TYPE=PNG:" in body
+    assert body.endswith("END:VCARD\r\n")
+
+
+def test_vcard_escapes_and_folds(client, payload):
+    contact_id = client.post(
+        BASE,
+        json={
+            **payload,
+            "last_name": "Lovelace; King",
+            "notes": "Line one\nLine two, with a comma. " + "x" * 200,
+        },
+    ).json()["id"]
+    body = client.get(f"{BASE}/{contact_id}/vcard").text
+
+    assert "N:Lovelace\\; King;Ada;;;" in body
+    assert "\\nLine two\\, with a comma" in body
+    # Long lines are folded; continuations start with a space.
+    assert all(len(line) <= 76 for line in body.split("\r\n"))
+    assert "\r\n x" in body
+
+
+def test_vcard_missing_contact_returns_404(client):
+    assert client.get(f"{BASE}/9999/vcard").status_code == 404
