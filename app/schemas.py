@@ -12,7 +12,16 @@ MAX_PHOTO_BYTES = 2 * 1024 * 1024
 _PHOTO_DATA_URL = re.compile(r"^data:image/(png|jpeg|gif|webp);base64,(?P<data>[A-Za-z0-9+/]+={0,2})$")
 
 
+_MAX_PHOTO_CHARS = (MAX_PHOTO_BYTES + 2) // 3 * 4 + len("data:image/jpeg;base64,")
+"""Longest data URL that can still decode to `MAX_PHOTO_BYTES` or less."""
+
+
 def _validate_photo(value: str) -> str:
+    # Reject on length before decoding: base64 expands 3 bytes to 4 characters, so
+    # anything longer than this cannot decode within the limit, and refusing it up
+    # front keeps an oversized payload from being decoded into memory just to fail.
+    if len(value) > _MAX_PHOTO_CHARS:
+        raise ValueError(f"Photo must be {MAX_PHOTO_BYTES // (1024 * 1024)} MB or smaller")
     # fullmatch, not match: `$` also matches just before a trailing newline, which
     # would let a stray "\n" ride along into the stored data URL.
     match = _PHOTO_DATA_URL.fullmatch(value)

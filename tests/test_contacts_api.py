@@ -186,6 +186,48 @@ def test_photo_rejects_trailing_newline(client, payload):
     assert response.status_code == 422
 
 
+def test_photo_rejects_oversized_payload_without_decoding_it(client, payload):
+    """A too-long data URL is refused on length, before it is decoded into memory."""
+    from app.schemas import _MAX_PHOTO_CHARS
+
+    huge = "data:image/png;base64," + "A" * _MAX_PHOTO_CHARS
+    response = client.post(BASE, json={**payload, "photo": huge})
+    assert response.status_code == 422
+
+
+def test_init_db_adds_photo_to_an_older_database(tmp_path):
+    """A database created before `photo` existed must gain the column, not break."""
+    import sqlalchemy
+
+    from app import database
+
+    db_file = tmp_path / "legacy.db"
+    legacy = sqlalchemy.create_engine(f"sqlite+pysqlite:///{db_file}")
+    with legacy.begin() as connection:
+        connection.execute(
+            sqlalchemy.text(
+                "CREATE TABLE contacts ("
+                "id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL,"
+                "email TEXT NOT NULL UNIQUE, phone TEXT, company TEXT, job_title TEXT,"
+                "address TEXT, city TEXT, state TEXT, postal_code TEXT, country TEXT, notes TEXT,"
+                "created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)"
+            )
+        )
+    legacy.dispose()
+
+    upgraded = sqlalchemy.create_engine(f"sqlite+pysqlite:///{db_file}")
+    original_engine = database.engine
+    database.engine = upgraded
+    try:
+        database.init_db()
+        columns = {c["name"] for c in sqlalchemy.inspect(upgraded).get_columns("contacts")}
+        assert "photo" in columns
+        database.init_db()  # idempotent: a second startup must not fail
+    finally:
+        database.engine = original_engine
+        upgraded.dispose()
+
+
 def test_photo_rejects_oversized_image(client, payload):
     import base64
 
