@@ -3,6 +3,10 @@
 A self-contained Contacts REST API built with **FastAPI** + **SQLAlchemy**, backed by an
 **in-memory SQLite database** by default. No external database, container, or migration
 step is needed — start the process and the API is ready.
+
+<img width="1360" height="1466" alt="image" src="https://github.com/user-attachments/assets/6dd26539-56b5-475c-94c0-f8188678c028" />
+
+
 <img width="1596" height="1246" alt="image" src="https://github.com/user-attachments/assets/ea6c5287-0668-4898-baf8-d44c933faeb6" />
 
 ## Quickstart
