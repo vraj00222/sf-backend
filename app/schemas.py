@@ -80,7 +80,8 @@ class AddressBase(BaseModel):
 
     @model_validator(mode="after")
     def _require_some_location(self) -> "AddressBase":
-        if not any((self.street, self.city, self.state, self.postal_code, self.country)):
+        fields = (self.street, self.city, self.state, self.postal_code, self.country)
+        if not any(field and field.strip() for field in fields):
             raise ValueError("An address needs at least one of street, city, state, postal code, or country")
         return self
 

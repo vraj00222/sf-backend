@@ -309,6 +309,13 @@ def test_address_rejects_all_blank_fields(client, payload):
     assert response.status_code == 422
 
 
+def test_address_rejects_whitespace_only_fields(client, payload):
+    response = client.post(
+        BASE, json={**payload, "addresses": [{"type": "Home", "city": "   "}]}
+    )
+    assert response.status_code == 422
+
+
 def test_put_replaces_address_list(client, payload):
     contact_id = client.post(BASE, json=payload).json()["id"]
     response = client.put(
