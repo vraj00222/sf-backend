@@ -1,4 +1,5 @@
 import logging
+import threading
 from collections.abc import Generator
 
 from sqlalchemy import create_engine, event, inspect, text
@@ -76,10 +77,23 @@ def init_db() -> None:
         logger.info("added missing column contacts.%s", column.name)
 
 
+_db_lock = threading.Lock()
+"""
+StaticPool shares one raw sqlite3 connection across every thread FastAPI's
+threadpool hands a request to; the sqlite3 module isn't safe against two
+threads actually executing on that same connection at once, and Next.js
+routinely fires two requests for a page in parallel (generateMetadata plus
+the page itself), which was enough to trip a real "bad parameter or other
+API misuse" error. A global lock serializes DB access — fine at this app's
+traffic; drop the lock for a per-request connection if that ever changes.
+"""
+
+
 def get_db() -> Generator[Session, None, None]:
     """FastAPI dependency yielding a session that is always closed."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    with _db_lock:
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
