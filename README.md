@@ -100,6 +100,7 @@ also read):
 | `PUT` | `/api/v1/contacts/{id}` | Full replace (omitted fields are cleared) |
 | `PATCH` | `/api/v1/contacts/{id}` | Partial update (only sent fields change) |
 | `DELETE` | `/api/v1/contacts/{id}` | Delete → `204` |
+| `GET` | `/api/v1/contacts/{id}/vcard` | Download as a vCard 3.0 `.vcf` (photo + typed addresses included) |
 
 ### Contact fields
 
