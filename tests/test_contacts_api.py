@@ -1,6 +1,11 @@
 BASE = "/api/v1/contacts"
 
 
+def _unfold(vcard_text: str) -> str:
+    """Reverse RFC 2426 line folding so substring checks don't straddle a fold."""
+    return vcard_text.replace("\r\n ", "")
+
+
 def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200
@@ -427,3 +432,83 @@ def test_vcard_escapes_carriage_returns(client, payload):
 
 def test_vcard_missing_contact_returns_404(client):
     assert client.get(f"{BASE}/9999/vcard").status_code == 404
+
+
+# --- Roast ("code review") vCard --------------------------------------------
+
+
+def test_roast_vcard_omits_photo_and_sets_grade_and_note(client, payload):
+    contact_id = client.post(BASE, json={**payload, "job_title": None, "photo": PHOTO}).json()["id"]
+    body = _unfold(client.get(f"{BASE}/{contact_id}/vcard?roast=true").text)
+
+    assert "PHOTO" not in body
+    assert "TITLE:Roast Grade:" in body
+    assert "CODE REVIEW:" in body
+    assert "CHANGES REQUESTED" in body
+
+
+def test_roast_vcard_keeps_existing_notes_ahead_of_the_roast(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    body = _unfold(client.get(f"{BASE}/{contact_id}/vcard?roast=true").text)
+    note_line = next(line for line in body.split("\r\n") if line.startswith("NOTE:"))
+    assert note_line.startswith("NOTE:First programmer.")
+
+
+def test_roast_vcard_combines_job_title_with_grade(client, payload):
+    contact_id = client.post(BASE, json={**payload, "job_title": "Mathematician"}).json()["id"]
+    body = _unfold(client.get(f"{BASE}/{contact_id}/vcard?roast=true").text)
+    assert "TITLE:Mathematician · Roast Grade:" in body
+
+
+def test_roast_vcard_fires_fullerton_trivia(client, payload):
+    contact_id = client.post(
+        BASE,
+        json={**payload, "addresses": [{"type": "Home", "city": "Fullerton", "state": "CA", "country": "USA"}]},
+    ).json()["id"]
+    body = _unfold(client.get(f"{BASE}/{contact_id}/vcard?roast=true").text)
+    assert "Fender" in body
+
+
+def test_roast_vcard_always_has_at_least_one_trivia_line(client, payload):
+    contact_id = client.post(BASE, json={**payload, "phone": None, "addresses": []}).json()["id"]
+    body = _unfold(client.get(f"{BASE}/{contact_id}/vcard?roast=true").text)
+    assert "✗" in body  # at least one bulleted line survived trimming
+
+
+def test_roast_vcard_stays_under_qr_byte_budget_with_huge_notes(client, payload):
+    from app.vcard import QR_BYTE_BUDGET
+
+    contact_id = client.post(BASE, json={**payload, "notes": "x" * 5000}).json()["id"]
+    response = client.get(f"{BASE}/{contact_id}/vcard?roast=true")
+    assert len(response.content) <= QR_BYTE_BUDGET
+
+
+def test_roast_vcard_stays_under_budget_with_max_addresses_and_notes(client, payload):
+    from app.vcard import QR_BYTE_BUDGET
+
+    verbose_address = {
+        "type": "Home",
+        "street": "1234 Very Long Street Name Boulevard Suite 4500",
+        "city": "San Francisco",
+        "state": "California",
+        "postal_code": "94105-1234",
+        "country": "United States of America",
+    }
+    contact_id = client.post(
+        BASE,
+        json={**payload, "notes": "y" * 3000, "addresses": [verbose_address] * 20},
+    ).json()["id"]
+    response = client.get(f"{BASE}/{contact_id}/vcard?roast=true")
+    assert response.status_code == 200
+    assert len(response.content) <= QR_BYTE_BUDGET
+
+
+def test_plain_vcard_unaffected_by_roast_param_default(client, payload):
+    contact_id = client.post(BASE, json={**payload, "photo": PHOTO}).json()["id"]
+    body = client.get(f"{BASE}/{contact_id}/vcard").text
+    assert "PHOTO" in body
+    assert "CODE REVIEW" not in body
+
+
+def test_roast_vcard_missing_contact_returns_404(client):
+    assert client.get(f"{BASE}/9999/vcard?roast=true").status_code == 404
