@@ -10,3 +10,4 @@ venv/
 .DS_Store
 /.claude/
 /.qodo/
+.venv
