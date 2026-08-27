@@ -13,7 +13,9 @@ _PHOTO_DATA_URL = re.compile(r"^data:image/(png|jpeg|gif|webp);base64,(?P<data>[
 
 
 def _validate_photo(value: str) -> str:
-    match = _PHOTO_DATA_URL.match(value)
+    # fullmatch, not match: `$` also matches just before a trailing newline, which
+    # would let a stray "\n" ride along into the stored data URL.
+    match = _PHOTO_DATA_URL.fullmatch(value)
     if match is None:
         raise ValueError("Photo must be a base64 data URL for a PNG, JPEG, GIF, or WebP image")
     try:

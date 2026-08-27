@@ -180,6 +180,12 @@ def test_photo_rejects_invalid_base64(client, payload):
     assert response.status_code == 422
 
 
+def test_photo_rejects_trailing_newline(client, payload):
+    """`$` would accept a trailing newline and store it; the data URL must be exact."""
+    response = client.post(BASE, json={**payload, "photo": "data:image/png;base64,aGVsbG8=\n"})
+    assert response.status_code == 422
+
+
 def test_photo_rejects_oversized_image(client, payload):
     import base64
 
