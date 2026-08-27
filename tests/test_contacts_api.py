@@ -195,6 +195,17 @@ def test_photo_rejects_oversized_payload_without_decoding_it(client, payload):
     assert response.status_code == 422
 
 
+def test_oversized_request_body_is_refused_before_parsing(client, payload):
+    from app.main import MAX_REQUEST_BYTES
+
+    response = client.post(
+        BASE,
+        content=b"{}" + b" " * (MAX_REQUEST_BYTES + 1),
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 413
+
+
 def test_init_db_adds_photo_to_an_older_database(tmp_path):
     """A database created before `photo` existed must gain the column, not break."""
     import sqlalchemy
