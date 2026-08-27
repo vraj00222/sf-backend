@@ -1,7 +1,7 @@
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import Address, Contact
+from app.models import Address, Contact, utcnow
 from app.schemas import AddressIn, ContactCreate, ContactReplace, ContactUpdate
 
 SORTABLE_FIELDS = ("id", "first_name", "last_name", "email", "company", "created_at", "updated_at")
@@ -63,6 +63,19 @@ def _address_rows(addresses: list[AddressIn]) -> list[Address]:
     return [Address(**address.model_dump()) for address in addresses]
 
 
+def _touch(contact: Contact) -> None:
+    """Advance updated_at for a change that only touched child rows.
+
+    The `onupdate` callback on Contact.updated_at fires only when SQLAlchemy
+    emits an UPDATE against the contacts row. Replacing the address list
+    inserts and deletes rows in `addresses` and can leave the parent
+    untouched — as can a PUT whose scalar fields all happen to be unchanged —
+    so an address-only edit would otherwise report a stale timestamp and sort
+    as if it never happened.
+    """
+    contact.updated_at = utcnow()
+
+
 def create_contact(db: Session, payload: ContactCreate) -> Contact:
     data = payload.model_dump(exclude={"addresses"})
     data["email"] = _normalize_email(data["email"])
@@ -78,6 +91,7 @@ def replace_contact(db: Session, contact: Contact, payload: ContactReplace) -> C
         setattr(contact, field, _normalize_email(value) if field == "email" else value)
     # Full replace: delete-orphan on the relationship drops the old rows.
     contact.addresses = _address_rows(payload.addresses)
+    _touch(contact)
     db.commit()
     db.refresh(contact)
     return contact
@@ -89,6 +103,7 @@ def update_contact(db: Session, contact: Contact, payload: ContactUpdate) -> Con
         setattr(contact, field, _normalize_email(value) if field == "email" else value)
     if "addresses" in payload.model_fields_set:
         contact.addresses = _address_rows(payload.addresses or [])
+        _touch(contact)
     db.commit()
     db.refresh(contact)
     return contact

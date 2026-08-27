@@ -48,6 +48,61 @@ def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
     cursor.close()
 
 
+# Columns that held a contact's single address before it became its own table.
+# Keys are the legacy `contacts` column names, values the Address field each maps to.
+LEGACY_ADDRESS_COLUMNS = {
+    "address": "street",
+    "city": "city",
+    "state": "state",
+    "postal_code": "postal_code",
+    "country": "country",
+}
+
+
+def migrate_legacy_addresses(connection, legacy_columns: dict[str, str]) -> int:
+    """Copy pre-Address-table flat address columns into the addresses table.
+
+    Returns the number of contacts migrated. Idempotent: only contacts that do
+    not already own an address row are touched, so repeated startups are a
+    no-op. The legacy columns are left in place — SQLite cannot drop a column
+    without rewriting the table, and they are harmless once every contact owns
+    a real Address row.
+    """
+    if not legacy_columns:
+        return 0
+
+    selected = ", ".join(f"c.{name}" for name in legacy_columns)
+    rows = (
+        connection.execute(
+            text(
+                f"SELECT c.id, {selected} FROM contacts c "
+                "WHERE NOT EXISTS (SELECT 1 FROM addresses a WHERE a.contact_id = c.id)"
+            )
+        )
+        .mappings()
+        .all()
+    )
+
+    migrated = 0
+    for row in rows:
+        values = {
+            field: (row[name] or "").strip() or None
+            for name, field in legacy_columns.items()
+        }
+        if not any(values.values()):
+            continue
+        connection.execute(
+            text(
+                "INSERT INTO addresses (contact_id, type, street, city, state, postal_code, country) "
+                "VALUES (:contact_id, 'Home', :street, :city, :state, :postal_code, :country)"
+            ),
+            {"contact_id": row["id"], **{f: values.get(f) for f in
+              ("street", "city", "state", "postal_code", "country")}},
+        )
+        migrated += 1
+    return migrated
+
+
 def init_db() -> None:
     """Create tables, then add any column an older database predates.
 
@@ -74,6 +129,18 @@ def init_db() -> None:
         with engine.begin() as connection:
             connection.execute(text(ddl))
         logger.info("added missing column contacts.%s", column.name)
+
+    # A database written before addresses became their own table still holds the
+    # values in the old flat columns. create_all() creates the new table but
+    # cannot move data, so without this every pre-existing contact would come
+    # back with an empty address list while its real address sat stranded in a
+    # column the ORM no longer maps.
+    legacy = {name: field for name, field in LEGACY_ADDRESS_COLUMNS.items() if name in existing}
+    if legacy:
+        with engine.begin() as connection:
+            migrated = migrate_legacy_addresses(connection, legacy)
+        if migrated:
+            logger.info("migrated %d legacy contact address(es) into addresses", migrated)
 
 
 def get_db() -> Generator[Session, None, None]:

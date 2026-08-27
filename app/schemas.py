@@ -78,10 +78,25 @@ class AddressBase(BaseModel):
     )
     country: str | None = Field(default=None, max_length=120, description="Country name.", examples=["USA"])
 
+    @field_validator("street", "city", "state", "postal_code", "country", mode="after")
+    @classmethod
+    def _trim(cls, value: str | None) -> str | None:
+        """Trim surrounding whitespace and treat a blank field as absent.
+
+        Without this a value of "   " is truthy, so it both satisfies the
+        "needs some location" rule below and is persisted as a semantically
+        empty string. Normalising here means every later check — and every
+        stored row — sees either real text or None.
+        """
+        if value is None:
+            return None
+        return value.strip() or None
+
     @model_validator(mode="after")
     def _require_some_location(self) -> "AddressBase":
+        # Field validators have already run, so these are trimmed or None.
         fields = (self.street, self.city, self.state, self.postal_code, self.country)
-        if not any(field and field.strip() for field in fields):
+        if not any(fields):
             raise ValueError("An address needs at least one of street, city, state, postal code, or country")
         return self
 
