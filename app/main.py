@@ -2,8 +2,9 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -87,6 +88,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+MAX_REQUEST_BYTES = 4 * 1024 * 1024
+"""Largest request body accepted: a 2 MB photo is ~2.7 MB as base64, plus fields."""
+
+
+@app.middleware("http")
+async def limit_request_body(request: Request, call_next):
+    """
+    Refuse an oversized body before it is parsed.
+
+    The photo validator caps the image, but that check only runs after the JSON
+    parser has already materialised the whole request. Rejecting on the declared
+    length keeps a huge payload from being parsed just to be thrown away.
+
+    ponytail: trusts Content-Length, so a chunked request without one slips past.
+    Enforce at the ASGI receive channel if this is ever exposed to the internet.
+    """
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_REQUEST_BYTES:
+        return JSONResponse(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            content={"detail": f"Request body must be {MAX_REQUEST_BYTES // (1024 * 1024)} MB or smaller"},
+        )
+    return await call_next(request)
+
 
 app.include_router(contacts.router)
 

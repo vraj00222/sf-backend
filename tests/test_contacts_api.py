@@ -144,3 +144,132 @@ def test_delete_contact(client, payload):
 def test_root_lists_entrypoints(client):
     body = client.get("/").json()
     assert body["contacts"] == BASE
+
+
+# --- Photo -----------------------------------------------------------------
+
+# 1x1 transparent PNG.
+PHOTO = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
+
+
+def test_create_contact_with_photo(client, payload):
+    response = client.post(BASE, json={**payload, "photo": PHOTO})
+    assert response.status_code == 201
+    assert response.json()["photo"] == PHOTO
+
+
+def test_photo_defaults_to_none(client, payload):
+    assert client.post(BASE, json=payload).json()["photo"] is None
+
+
+def test_photo_rejects_non_data_url(client, payload):
+    response = client.post(BASE, json={**payload, "photo": "https://example.com/me.png"})
+    assert response.status_code == 422
+
+
+def test_photo_rejects_non_image_data_url(client, payload):
+    response = client.post(BASE, json={**payload, "photo": "data:text/html;base64,PGI+aGk8L2I+"})
+    assert response.status_code == 422
+
+
+def test_photo_rejects_invalid_base64(client, payload):
+    response = client.post(BASE, json={**payload, "photo": "data:image/png;base64,@@not-base64@@"})
+    assert response.status_code == 422
+
+
+def test_photo_rejects_trailing_newline(client, payload):
+    """`$` would accept a trailing newline and store it; the data URL must be exact."""
+    response = client.post(BASE, json={**payload, "photo": "data:image/png;base64,aGVsbG8=\n"})
+    assert response.status_code == 422
+
+
+def test_photo_rejects_oversized_payload_without_decoding_it(client, payload):
+    """A too-long data URL is refused on length, before it is decoded into memory."""
+    from app.schemas import _MAX_PHOTO_CHARS
+
+    huge = "data:image/png;base64," + "A" * _MAX_PHOTO_CHARS
+    response = client.post(BASE, json={**payload, "photo": huge})
+    assert response.status_code == 422
+
+
+def test_oversized_request_body_is_refused_before_parsing(client, payload):
+    from app.main import MAX_REQUEST_BYTES
+
+    response = client.post(
+        BASE,
+        content=b"{}" + b" " * (MAX_REQUEST_BYTES + 1),
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 413
+
+
+def test_init_db_adds_photo_to_an_older_database(tmp_path):
+    """A database created before `photo` existed must gain the column, not break."""
+    import sqlalchemy
+
+    from app import database
+
+    db_file = tmp_path / "legacy.db"
+    legacy = sqlalchemy.create_engine(f"sqlite+pysqlite:///{db_file}")
+    with legacy.begin() as connection:
+        connection.execute(
+            sqlalchemy.text(
+                "CREATE TABLE contacts ("
+                "id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL,"
+                "email TEXT NOT NULL UNIQUE, phone TEXT, company TEXT, job_title TEXT,"
+                "address TEXT, city TEXT, state TEXT, postal_code TEXT, country TEXT, notes TEXT,"
+                "created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)"
+            )
+        )
+    legacy.dispose()
+
+    upgraded = sqlalchemy.create_engine(f"sqlite+pysqlite:///{db_file}")
+    original_engine = database.engine
+    database.engine = upgraded
+    try:
+        database.init_db()
+        columns = {c["name"] for c in sqlalchemy.inspect(upgraded).get_columns("contacts")}
+        assert "photo" in columns
+        database.init_db()  # idempotent: a second startup must not fail
+    finally:
+        database.engine = original_engine
+        upgraded.dispose()
+
+
+def test_photo_rejects_oversized_image(client, payload):
+    import base64
+
+    from app.schemas import MAX_PHOTO_BYTES
+
+    too_big = base64.b64encode(b"\0" * (MAX_PHOTO_BYTES + 1)).decode()
+    response = client.post(BASE, json={**payload, "photo": f"data:image/png;base64,{too_big}"})
+    assert response.status_code == 422
+
+
+def test_patch_updates_photo_only(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    response = client.patch(f"{BASE}/{contact_id}", json={"photo": PHOTO})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["photo"] == PHOTO
+    assert body["first_name"] == "Ada"
+
+
+def test_put_without_photo_clears_it(client, payload):
+    contact_id = client.post(BASE, json={**payload, "photo": PHOTO}).json()["id"]
+    response = client.put(
+        f"{BASE}/{contact_id}",
+        json={"first_name": "Ada", "last_name": "Lovelace", "email": "ada@example.com"},
+    )
+    assert response.status_code == 200
+    assert response.json()["photo"] is None  # PUT is a full replace
+
+
+def test_put_carrying_photo_preserves_it(client, payload):
+    contact_id = client.post(BASE, json={**payload, "photo": PHOTO}).json()["id"]
+    response = client.put(f"{BASE}/{contact_id}", json={**payload, "photo": PHOTO})
+    assert response.status_code == 200
+    assert response.json()["photo"] == PHOTO
