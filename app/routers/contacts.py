@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.database import get_db
 from app.models import Contact
+from app.vcard import build_vcard, vcard_filename
 from app.schemas import (
     ContactCreate,
     ContactPage,
@@ -119,6 +120,37 @@ def list_contacts(
 def get_contact(contact_id: int = CONTACT_ID, db: Session = Depends(get_db)) -> Contact:
     """Fetch a single contact by its id."""
     return _get_or_404(db, contact_id)
+
+
+@router.get(
+    "/{contact_id}/vcard",
+    operation_id="exportContactVcard",
+    summary="Export a contact as a vCard",
+    response_description="A vCard 3.0 (.vcf) file, offered as a download.",
+    responses={
+        status.HTTP_200_OK: {"content": {"text/vcard": {"example": "BEGIN:VCARD\r\nVERSION:3.0\r\n..."}}},
+        status.HTTP_404_NOT_FOUND: NOT_FOUND,
+    },
+)
+def export_contact_vcard(
+    contact_id: int = CONTACT_ID,
+    roast: bool = Query(False, description="Embed a numeric/address roast and grade, sized to fit a QR code."),
+    db: Session = Depends(get_db),
+) -> Response:
+    """
+    Export one contact as a vCard 3.0 file, including the profile photo and
+    every typed address, ready to import into Contacts, Outlook, or a phone.
+
+    `?roast=true` swaps the photo for a deterministic "code review" of the
+    contact's phone number and address, appended to NOTE with a grade in
+    TITLE — meant to be QR-encoded and scanned, not just downloaded.
+    """
+    contact = _get_or_404(db, contact_id)
+    return Response(
+        content=build_vcard(contact, roast=roast),
+        media_type="text/vcard",
+        headers={"Content-Disposition": f'attachment; filename="{vcard_filename(contact)}"'},
+    )
 
 
 @router.put(
