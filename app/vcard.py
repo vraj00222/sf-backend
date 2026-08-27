@@ -12,6 +12,9 @@ _MAX_LINE = 75
 
 def _escape(value: str) -> str:
     """Escape the characters vCard text values reserve."""
+    # Normalise CR first: a bare \r left in a value is a raw line break that
+    # lenient parsers read as the start of a new property.
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
     return (
         value.replace("\\", "\\\\")
         .replace(";", "\\;")
@@ -26,12 +29,9 @@ def _fold(line: str) -> str:
         return line
     # ponytail: folds on characters, not octets; fine for ASCII-heavy values
     # (base64 photos), switch to byte-aware folding if non-ASCII names overflow.
-    parts = [line[:_MAX_LINE]]
-    rest = line[_MAX_LINE:]
     step = _MAX_LINE - 1  # continuation lines lose one column to the leading space
-    while rest:
-        parts.append(" " + rest[:step])
-        rest = rest[step:]
+    parts = [line[:_MAX_LINE]]
+    parts += [" " + line[i : i + step] for i in range(_MAX_LINE, len(line), step)]
     return "\r\n".join(parts)
 
 

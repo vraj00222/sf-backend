@@ -413,5 +413,17 @@ def test_vcard_escapes_and_folds(client, payload):
     assert "\r\n x" in body
 
 
+def test_vcard_escapes_carriage_returns(client, payload):
+    """A bare \\r would otherwise read as a line break and forge properties."""
+    contact_id = client.post(
+        BASE,
+        json={**payload, "notes": "hi\r\nthere\rEMAIL;TYPE=INTERNET:evil@example.com"},
+    ).json()["id"]
+    body = client.get(f"{BASE}/{contact_id}/vcard").text
+
+    assert "NOTE:hi\\nthere\\nEMAIL\\;TYPE=INTERNET:evil@example.com" in body
+    assert body.count("EMAIL;TYPE=INTERNET:") == 1
+
+
 def test_vcard_missing_contact_returns_404(client):
     assert client.get(f"{BASE}/9999/vcard").status_code == 404
